@@ -1,0 +1,46 @@
+# Runnerless integration tests
+
+Public fixtures for testing prerelease Runnerless instances and GitHub Actions webhook routing.
+
+## What runs
+
+- `.runnerless-ci.staging.ts` is the trusted staging program. It reports receipt of pull request, workflow run, check run, check suite, and commit status events.
+- `.github/workflows/fixture.yml` runs a deterministic job on pull requests using a standard GitHub-hosted Linux runner, no actions, no checkout, and `permissions: {}`.
+- `input.txt` is the disposable PR input.
+- `verify.py` checks the current PR revision, Runnerless App identity, successful staging checks, and successful Actions workflow. It rejects production Runnerless checks and incomplete API responses.
+
+No repository secrets or deployment credentials are needed.
+
+## Activation
+
+The fixture is published; staging execution is not yet activated or verified live.
+
+The existing My Toolkit GitHub App must have access to this repository and subscribe to pull request, workflow run, check run, check suite, and commit status events. The operator must deploy an isolated Runnerless compiler/runtime with `RUNNERLESS_CHANNEL=staging`, separate D1/R2/queues, and configure ci-toolkit with:
+
+```json
+{"staging":{"binding":"RUNNERLESS_STAGING","repositories":["pawelchcki/runnerless-integration-tests"]}}
+```
+
+Store that JSON in `RUNNERLESS_NONPRODUCTION_ROUTES`; the matching `RUNNERLESS_STAGING` private service binding must target the staging compiler's `Compiler` entrypoint. Keep the production `.runnerless-ci.ts` absent here. Both the named file and the operator routing configuration are required.
+
+## Exercise the integration
+
+1. Open a PR changing only `input.txt`, with `main` as its base. Runnerless executes the staging program from the pinned base commit; a changed PR-head program receives configuration validation only.
+2. Wait for the `Runnerless fixture` workflow to succeed.
+3. From this repository's checkout, with Python 3.10+ and an authenticated GitHub CLI, run:
+
+```sh
+python3 verify.py --repo pawelchcki/runnerless-integration-tests --pr 1 --app-id 4602759
+```
+
+Replace `1` with the actual PR number. The verifier waits up to five minutes and fails if the PR head changes. Expected checks are `Runnerless / [staging]` and the namespaced `Fixture pull request`, `Fixture workflow run`, `Fixture check run`, and `Fixture check suite` checks. Commit status coverage is optional and requires an external status producer.
+
+4. Push another data-only commit to exercise the same cached program, then run the verifier again. Cache reuse itself requires the operator's compiler metrics; GitHub checks alone do not prove a cache hit.
+5. To test candidate configuration validation, make a harmless program comment change in the PR and add `--require-configuration` to the verifier command.
+6. Close the test PR and delete its disposable branch after collecting the results.
+
+Remove only this repository from any shared App's selected-repository list when retiring the fixture. Do not uninstall the shared App from the account.
+
+## Validation status
+
+The program and verifier have local compilation/unit-test coverage in the infrastructure source repository. Publishing this fixture does not establish that a live staging instance exists or that a live end-to-end run passed.

@@ -1,0 +1,14 @@
+name: Runnerless fixture
+
+on:
+  pull_request:
+
+# The job has no repository, package, artifact, or secret access. It exists solely to
+# generate GitHub's ordinary check_suite, check_run, and workflow_run deliveries.
+permissions: {}
+
+jobs:
+  deterministic:
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "runnerless-fixture" = "runnerless-fixture"
