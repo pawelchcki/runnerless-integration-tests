@@ -13,6 +13,7 @@ from typing import Any
 STAGING_AGGREGATE = "Runnerless / [staging]"
 STAGING_CONFIGURATION = "Runnerless / [staging] Program configuration"
 FIXTURE_WORKFLOW = "Runnerless fixture"
+BADGE_CHECKS = {"Runnerless", "Runnerless configuration", "Runnerless / Program configuration"}
 EXPECTED = {
     STAGING_AGGREGATE,
     "Runnerless / [staging] Fixture pull request",
@@ -65,10 +66,17 @@ def fixture_run(repo: str, sha: str) -> dict[str, Any] | None:
 def incomplete(repo: str, sha: str, app_id: int, require_configuration: bool) -> list[str]:
     runs = check_runs(repo, sha)
     names = {run.get("name") for run in runs if isinstance(run.get("name"), str)}
-    production = sorted(name for name in names if name in {"Runnerless", "Runnerless configuration"}
-                        or name.startswith("Runnerless / ") and "[staging]" not in name)
-    if production:
-        return ["fixture produced production Runnerless checks: " + ", ".join(production)]
+    production = [run for run in runs if isinstance(run.get("name"), str)
+                  and (run["name"] in {"Runnerless", "Runnerless configuration"}
+                       or run["name"].startswith("Runnerless / ") and "[staging]" not in run["name"])]
+    unexpected = sorted({run["name"] for run in production} - BADGE_CHECKS)
+    if unexpected:
+        return ["fixture produced unexpected production Runnerless checks: " + ", ".join(unexpected)]
+    invalid_badge = sorted({run["name"] for run in production
+                            if run.get("head_sha") != sha or run.get("app", {}).get("id") != app_id
+                            or run.get("status") != "completed" or run.get("conclusion") != "success"})
+    if invalid_badge:
+        return ["badge checks are not successful App checks on the PR head: " + ", ".join(invalid_badge)]
     needed = set(EXPECTED)
     if require_configuration:
         needed.add(STAGING_CONFIGURATION)
