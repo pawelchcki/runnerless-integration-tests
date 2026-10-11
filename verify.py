@@ -13,7 +13,7 @@ from typing import Any
 STAGING_AGGREGATE = "Runnerless / [staging]"
 STAGING_CONFIGURATION = "Runnerless / [staging] Program configuration"
 FIXTURE_WORKFLOW = "Runnerless fixture"
-BADGE_CHECKS = {"Runnerless", "Runnerless / Program configuration"}
+BADGE_CHECKS = {"Runnerless", "Runnerless configuration", "Runnerless / Program configuration"}
 EXPECTED = {
     STAGING_AGGREGATE,
     "Runnerless / [staging] Fixture pull request",
