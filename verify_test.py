@@ -9,11 +9,13 @@ import verify
 HEAD = "a" * 40
 APP_ID = 4602759
 TITLE_POLICY = "ci-toolkit/pull-request-title"
+PR_UPDATED_AT = "2026-10-21T18:00:00Z"
 
 
 def check(name, **changes):
     return {"id": 1, "name": name, "head_sha": HEAD, "app": {"id": APP_ID},
-            "status": "completed", "conclusion": "success", **changes}
+            "status": "completed", "conclusion": "success",
+            "completed_at": "2026-10-21T18:00:01Z", **changes}
 
 
 class BadgeFixtureVerification(unittest.TestCase):
@@ -23,7 +25,7 @@ class BadgeFixtureVerification(unittest.TestCase):
                     "conclusion": workflow_conclusion}
         with patch.object(verify, "check_runs", return_value=runs + list(extras)), \
                 patch.object(verify, "fixture_run", return_value=workflow):
-            return verify.incomplete("pawelchcki/runnerless-integration-tests", HEAD, APP_ID, False)
+            return verify.incomplete("pawelchcki/runnerless-integration-tests", HEAD, APP_ID, False, PR_UPDATED_AT)
 
     def test_staging_and_title_policy_without_badge_checks_pass(self):
         self.assertEqual(self.problems(), [])
@@ -58,6 +60,12 @@ class BadgeFixtureVerification(unittest.TestCase):
     def test_successful_title_attempt_supersedes_an_older_failure(self):
         self.assertEqual(self.problems([check(TITLE_POLICY, id=0, conclusion="failure")]), [])
 
+    def test_title_check_must_complete_after_the_pr_revision(self):
+        for completed_at in ["2026-10-21T17:59:59Z", PR_UPDATED_AT, None, "invalid"]:
+            with self.subTest(completed_at=completed_at):
+                self.assertTrue(any(TITLE_POLICY in problem for problem in self.problems(
+                    [check(TITLE_POLICY, completed_at=completed_at)], omitted=[TITLE_POLICY])))
+
     def test_badge_check_identity_and_completion_are_required(self):
         for name in ("Runnerless", "Runnerless configuration", "Runnerless / Program configuration"):
             for changes in [{"app": {"id": 1}}, {"head_sha": "b" * 40},
@@ -79,7 +87,7 @@ class SnapshotVerification(unittest.TestCase):
         args = ["verify.py", "--repo", "pawelchcki/runnerless-integration-tests",
                 "--pr", "1", "--app-id", str(APP_ID)]
         with patch.object(verify.sys, "argv", args), \
-                patch.object(verify, "current_pr", side_effect=snapshots), \
+                patch.object(verify, "current_pr", side_effect=[{"updated_at": PR_UPDATED_AT, **item} for item in snapshots]), \
                 patch.object(verify, "incomplete", return_value=[]), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             return verify.main()
@@ -101,6 +109,11 @@ class SnapshotVerification(unittest.TestCase):
     def test_head_change_during_check_reads_is_rejected(self):
         initial = {"head": {"sha": HEAD}, "title": "test: exercise the fixture"}
         changed = {"head": {"sha": "b" * 40}, "title": initial["title"]}
+        self.assertEqual(self.result([initial, initial, changed]), 2)
+
+    def test_revision_change_during_check_reads_is_rejected(self):
+        initial = {"head": {"sha": HEAD}, "title": "test: exercise the fixture"}
+        changed = {**initial, "updated_at": "2026-10-21T18:00:02Z"}
         self.assertEqual(self.result([initial, initial, changed]), 2)
 
 

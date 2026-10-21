@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 import subprocess
 import sys
@@ -64,7 +65,18 @@ def fixture_run(repo: str, sha: str) -> dict[str, Any] | None:
     return max(matches, key=lambda run: int(run.get("id", 0)), default=None)
 
 
-def incomplete(repo: str, sha: str, app_id: int, require_configuration: bool) -> list[str]:
+def completed_after(run: dict[str, Any], revision: str) -> bool:
+    try:
+        completed = datetime.fromisoformat(run.get("completed_at", "").replace("Z", "+00:00"))
+        updated = datetime.fromisoformat(revision.replace("Z", "+00:00"))
+    except (AttributeError, TypeError, ValueError):
+        return False
+    # GitHub timestamps have second precision, so equal times cannot prove freshness.
+    return completed.tzinfo is not None and updated.tzinfo is not None and completed > updated
+
+
+def incomplete(repo: str, sha: str, app_id: int, require_configuration: bool,
+               pr_updated_at: str) -> list[str]:
     runs = check_runs(repo, sha)
     names = {run.get("name") for run in runs if isinstance(run.get("name"), str)}
     production = [run for run in runs if isinstance(run.get("name"), str)
@@ -89,7 +101,8 @@ def incomplete(repo: str, sha: str, app_id: int, require_configuration: bool) ->
         matches = [run for run in runs if run.get("name") == name]
         owned = [run for run in matches if run.get("head_sha") == sha and run.get("app", {}).get("id") == app_id]
         latest = max(owned, key=lambda run: int(run.get("id", 0)), default=None)
-        if latest is None or latest.get("status") != "completed" or latest.get("conclusion") != "success":
+        if (latest is None or latest.get("status") != "completed" or latest.get("conclusion") != "success"
+                or name == TITLE_POLICY and not completed_after(latest, pr_updated_at)):
             invalid.append(name)
     aggregate = [run for run in runs if run.get("name") == STAGING_AGGREGATE
                  and run.get("head_sha") == sha and run.get("app", {}).get("id") == app_id]
@@ -122,20 +135,22 @@ def main() -> int:
     if not REPOSITORY.fullmatch(args.repo) or args.timeout < 1 or args.interval < 1 or args.pr < 1 or args.app_id < 1:
         parser.error("repo must be OWNER/REPO; pr, app-id, timeout, and interval must be positive")
     initial = current_pr(args.repo, args.pr)
-    initial_sha, initial_title = initial["head"]["sha"], initial["title"]
+    initial_sha, initial_title, initial_updated = initial["head"]["sha"], initial["title"], initial["updated_at"]
     deadline = time.monotonic() + args.timeout
     while True:
         current = current_pr(args.repo, args.pr)
         current_sha = current["head"]["sha"]
-        if current_sha != initial_sha or current["title"] != initial_title:
-            print("PR head or title changed while verifying; rerun against the new snapshot.", file=sys.stderr)
+        if (current_sha != initial_sha or current["title"] != initial_title
+                or current["updated_at"] != initial_updated):
+            print("PR changed while verifying; rerun against the new snapshot.", file=sys.stderr)
             return 2
-        problems = incomplete(args.repo, current_sha, args.app_id, args.require_configuration)
+        problems = incomplete(args.repo, current_sha, args.app_id, args.require_configuration, initial_updated)
         if not problems:
             # Title edits can invalidate the native check without changing the head.
             final = current_pr(args.repo, args.pr)
-            if final["head"]["sha"] != current_sha or final["title"] != initial_title:
-                print("PR head or title changed while verifying; rerun against the new snapshot.", file=sys.stderr)
+            if (final["head"]["sha"] != current_sha or final["title"] != initial_title
+                    or final["updated_at"] != initial_updated):
+                print("PR changed while verifying; rerun against the new snapshot.", file=sys.stderr)
                 return 2
             print(f"staging fixture verified for {args.repo} PR #{args.pr} at {current_sha}")
             return 0
