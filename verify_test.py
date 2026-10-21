@@ -10,22 +10,27 @@ HEAD = "a" * 40
 APP_ID = 4602759
 TITLE_POLICY = "ci-toolkit/pull-request-title"
 PR_UPDATED_AT = "2026-10-21T18:00:00Z"
+PR_TITLE = "test: exercise the fixture"
+TITLE_SUMMARY = ("✅ **PR title is a conventional release commit header.**\n\n"
+                 "| Squash commit title | Result |\n|---|---|\n"
+                 "| `test: exercise the fixture` | ✅ |")
 
 
 def check(name, **changes):
     return {"id": 1, "name": name, "head_sha": HEAD, "app": {"id": APP_ID},
             "status": "completed", "conclusion": "success",
-            "completed_at": "2026-10-21T18:00:01Z", **changes}
+            "completed_at": "2026-10-21T18:00:01Z",
+            "output": {"summary": TITLE_SUMMARY} if name == TITLE_POLICY else None, **changes}
 
 
 class BadgeFixtureVerification(unittest.TestCase):
-    def problems(self, extras=(), omitted=(), workflow_conclusion="success"):
+    def problems(self, extras=(), omitted=(), workflow_conclusion="success", title=PR_TITLE):
         runs = [check(name) for name in verify.EXPECTED | {TITLE_POLICY} if name not in omitted]
         workflow = {"id": 1, "head_sha": HEAD, "status": "completed",
                     "conclusion": workflow_conclusion}
         with patch.object(verify, "check_runs", return_value=runs + list(extras)), \
                 patch.object(verify, "fixture_run", return_value=workflow):
-            return verify.incomplete("pawelchcki/runnerless-integration-tests", HEAD, APP_ID, False, PR_UPDATED_AT)
+            return verify.incomplete("pawelchcki/runnerless-integration-tests", HEAD, APP_ID, False, title)
 
     def test_staging_and_title_policy_without_badge_checks_pass(self):
         self.assertEqual(self.problems(), [])
@@ -60,11 +65,58 @@ class BadgeFixtureVerification(unittest.TestCase):
     def test_successful_title_attempt_supersedes_an_older_failure(self):
         self.assertEqual(self.problems([check(TITLE_POLICY, id=0, conclusion="failure")]), [])
 
-    def test_title_check_must_complete_after_the_pr_revision(self):
+    def test_matching_title_witness_accepts_reused_check_timestamps(self):
         for completed_at in ["2026-10-21T17:59:59Z", PR_UPDATED_AT, None, "invalid"]:
             with self.subTest(completed_at=completed_at):
+                self.assertEqual(self.problems(
+                    [check(TITLE_POLICY, created_at="2026-10-21T17:00:00Z",
+                           started_at="2026-10-21T17:00:00Z", completed_at=completed_at)],
+                    omitted=[TITLE_POLICY]), [])
+
+    def test_previous_title_evaluation_finishing_after_an_edit_is_rejected(self):
+        summary = ("✅ **PR title is a conventional release commit header.**\n\n"
+                   "| Squash commit title | Result |\n|---|---|\n"
+                   "| `test: the previous title` | ✅ |")
+        self.assertTrue(any(TITLE_POLICY in problem for problem in self.problems(
+            [check(TITLE_POLICY, started_at="2026-10-21T17:59:59Z",
+                   completed_at="2026-10-21T18:00:01Z", output={"summary": summary})],
+            omitted=[TITLE_POLICY])))
+
+    def test_title_witness_requires_the_complete_native_summary(self):
+        for output in [None, {}, {"summary": None}, {"summary": "success"},
+                       {"summary": "unrecognized format\n| `test: exercise the fixture` | ✅ |"},
+                       {"summary": TITLE_SUMMARY + "\n\nEvaluated 2 open PRs sharing this head."}]:
+            with self.subTest(output=output):
                 self.assertTrue(any(TITLE_POLICY in problem for problem in self.problems(
-                    [check(TITLE_POLICY, completed_at=completed_at)], omitted=[TITLE_POLICY])))
+                    [check(TITLE_POLICY, output=output)], omitted=[TITLE_POLICY])))
+
+    def test_title_witness_matches_native_backtick_and_pipe_escaping(self):
+        title = r"test: use `pipes|ticks` and a \backslash"
+        summary = ("✅ **PR title is a conventional release commit header.**\n\n"
+                   "| Squash commit title | Result |\n|---|---|\n"
+                   r"| `test: use \`pipes\|ticks\` and a \backslash` | ✅ |")
+        self.assertEqual(self.problems(
+            [check(TITLE_POLICY, output={"summary": summary})], omitted=[TITLE_POLICY], title=title), [])
+
+    def test_title_witness_bound_counts_utf16_units(self):
+        for title in ["test: " + "x" * 250, "test: " + "😀" * 125]:
+            summary = ("✅ **PR title is a conventional release commit header.**\n\n"
+                       "| Squash commit title | Result |\n|---|---|\n"
+                       f"| `{title}` | ✅ |")
+            with self.subTest(title=title):
+                self.assertEqual(self.problems(
+                    [check(TITLE_POLICY, output={"summary": summary})], omitted=[TITLE_POLICY], title=title), [])
+                self.assertTrue(any(TITLE_POLICY in problem for problem in self.problems(
+                    [check(TITLE_POLICY, output={"summary": summary})], omitted=[TITLE_POLICY], title=title + "x")))
+
+    def test_title_witness_rejects_a_truncated_title(self):
+        title = "test: " + "😀" * 126
+        truncated = "test: " + "😀" * 125
+        summary = ("✅ **PR title is a conventional release commit header.**\n\n"
+                   "| Squash commit title | Result |\n|---|---|\n"
+                   f"| `{truncated}` | ✅ |")
+        self.assertTrue(any(TITLE_POLICY in problem for problem in self.problems(
+            [check(TITLE_POLICY, output={"summary": summary})], omitted=[TITLE_POLICY], title=title)))
 
     def test_badge_check_identity_and_completion_are_required(self):
         for name in ("Runnerless", "Runnerless configuration", "Runnerless / Program configuration"):

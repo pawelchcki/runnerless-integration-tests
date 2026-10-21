@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
 import json
 import subprocess
 import sys
@@ -15,6 +14,7 @@ STAGING_AGGREGATE = "Runnerless / [staging]"
 STAGING_CONFIGURATION = "Runnerless / [staging] Program configuration"
 FIXTURE_WORKFLOW = "Runnerless fixture"
 TITLE_POLICY = "ci-toolkit/pull-request-title"
+TITLE_WITNESS_UNITS = 256
 BADGE_CHECKS = {"Runnerless", "Runnerless configuration", "Runnerless / Program configuration"}
 EXPECTED = {
     STAGING_AGGREGATE,
@@ -65,18 +65,28 @@ def fixture_run(repo: str, sha: str) -> dict[str, Any] | None:
     return max(matches, key=lambda run: int(run.get("id", 0)), default=None)
 
 
-def completed_after(run: dict[str, Any], revision: str) -> bool:
-    try:
-        completed = datetime.fromisoformat(run.get("completed_at", "").replace("Z", "+00:00"))
-        updated = datetime.fromisoformat(revision.replace("Z", "+00:00"))
-    except (AttributeError, TypeError, ValueError):
+def title_witness_matches(run: dict[str, Any], title: str) -> bool:
+    # Native evaluateTitle() truncates its table cell at 256 JavaScript UTF-16
+    # code units. Only its complete, single-PR summary can witness this full title.
+    if not isinstance(title, str):
         return False
-    # GitHub timestamps have second precision, so equal times cannot prove freshness.
-    return completed.tzinfo is not None and updated.tzinfo is not None and completed > updated
+    try:
+        if len(title.encode("utf-16-le")) // 2 > TITLE_WITNESS_UNITS:
+            return False
+    except UnicodeEncodeError:
+        return False
+    output = run.get("output")
+    if not isinstance(output, dict):
+        return False
+    escaped = title.replace("`", "\\`").replace("|", "\\|")
+    expected = ("✅ **PR title is a conventional release commit header.**\n\n"
+                "| Squash commit title | Result |\n|---|---|\n"
+                f"| `{escaped}` | ✅ |")
+    return output.get("summary") == expected
 
 
 def incomplete(repo: str, sha: str, app_id: int, require_configuration: bool,
-               pr_updated_at: str) -> list[str]:
+               pr_title: str) -> list[str]:
     runs = check_runs(repo, sha)
     names = {run.get("name") for run in runs if isinstance(run.get("name"), str)}
     production = [run for run in runs if isinstance(run.get("name"), str)
@@ -102,7 +112,7 @@ def incomplete(repo: str, sha: str, app_id: int, require_configuration: bool,
         owned = [run for run in matches if run.get("head_sha") == sha and run.get("app", {}).get("id") == app_id]
         latest = max(owned, key=lambda run: int(run.get("id", 0)), default=None)
         if (latest is None or latest.get("status") != "completed" or latest.get("conclusion") != "success"
-                or name == TITLE_POLICY and not completed_after(latest, pr_updated_at)):
+                or name == TITLE_POLICY and not title_witness_matches(latest, pr_title)):
             invalid.append(name)
     aggregate = [run for run in runs if run.get("name") == STAGING_AGGREGATE
                  and run.get("head_sha") == sha and run.get("app", {}).get("id") == app_id]
@@ -144,7 +154,7 @@ def main() -> int:
                 or current["updated_at"] != initial_updated):
             print("PR changed while verifying; rerun against the new snapshot.", file=sys.stderr)
             return 2
-        problems = incomplete(args.repo, current_sha, args.app_id, args.require_configuration, initial_updated)
+        problems = incomplete(args.repo, current_sha, args.app_id, args.require_configuration, initial_title)
         if not problems:
             # Title edits can invalidate the native check without changing the head.
             final = current_pr(args.repo, args.pr)
