@@ -1,3 +1,5 @@
+import contextlib
+import io
 import unittest
 from unittest.mock import patch
 
@@ -49,6 +51,13 @@ class BadgeFixtureVerification(unittest.TestCase):
     def test_other_production_effects_are_rejected(self):
         self.assertIn("unexpected production", self.problems([check("Runnerless / Deploy")])[0])
 
+    def test_other_native_policy_effects_are_rejected(self):
+        self.assertTrue(any("unexpected production" in problem for problem in
+                            self.problems([check("ci-toolkit/another-policy")])))
+
+    def test_successful_title_attempt_supersedes_an_older_failure(self):
+        self.assertEqual(self.problems([check(TITLE_POLICY, id=0, conclusion="failure")]), [])
+
     def test_badge_check_identity_and_completion_are_required(self):
         for name in ("Runnerless", "Runnerless configuration", "Runnerless / Program configuration"):
             for changes in [{"app": {"id": 1}}, {"head_sha": "b" * 40},
@@ -63,6 +72,36 @@ class BadgeFixtureVerification(unittest.TestCase):
     def test_badge_cannot_hide_a_failed_fixture_workflow(self):
         self.assertTrue(any("fixture workflow concluded" in problem for problem in self.problems(
             [check("Runnerless")], workflow_conclusion="failure")))
+
+
+class SnapshotVerification(unittest.TestCase):
+    def result(self, snapshots):
+        args = ["verify.py", "--repo", "pawelchcki/runnerless-integration-tests",
+                "--pr", "1", "--app-id", str(APP_ID)]
+        with patch.object(verify.sys, "argv", args), \
+                patch.object(verify, "current_pr", side_effect=snapshots), \
+                patch.object(verify, "incomplete", return_value=[]), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return verify.main()
+
+    def test_unchanged_snapshot_passes(self):
+        initial = {"head": {"sha": HEAD}, "title": "test: exercise the fixture"}
+        self.assertEqual(self.result([initial, initial, initial]), 0)
+
+    def test_title_change_during_check_reads_is_rejected(self):
+        initial = {"head": {"sha": HEAD}, "title": "test: exercise the fixture"}
+        changed = {"head": {"sha": HEAD}, "title": "invalid title"}
+        self.assertEqual(self.result([initial, initial, changed]), 2)
+
+    def test_title_change_before_polling_is_rejected(self):
+        initial = {"head": {"sha": HEAD}, "title": "test: exercise the fixture"}
+        changed = {"head": {"sha": HEAD}, "title": "invalid title"}
+        self.assertEqual(self.result([initial, changed, changed]), 2)
+
+    def test_head_change_during_check_reads_is_rejected(self):
+        initial = {"head": {"sha": HEAD}, "title": "test: exercise the fixture"}
+        changed = {"head": {"sha": "b" * 40}, "title": initial["title"]}
+        self.assertEqual(self.result([initial, initial, changed]), 2)
 
 
 if __name__ == "__main__":

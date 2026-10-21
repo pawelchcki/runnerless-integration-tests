@@ -30,7 +30,7 @@ The existing My Toolkit GitHub App must have access to this repository and subsc
 python3 verify.py --repo pawelchcki/runnerless-integration-tests --pr 1 --app-id 4602759
 ```
 
-Replace `1` with the actual PR number. The title policy must first be merged into the trusted default-branch program. The verifier waits up to five minutes and fails if the PR head changes. Expected checks are the production `ci-toolkit/pull-request-title`, `Runnerless / [staging]`, and the namespaced `Fixture pull request`, `Fixture workflow run`, `Fixture check run`, and `Fixture check suite` checks. Commit status coverage is optional and requires an external status producer.
+Replace `1` with the actual PR number. The title policy must first be merged into the trusted default-branch program. The verifier waits up to five minutes and fails if the PR head or title changes, including during the final check reads. Expected checks are the production `ci-toolkit/pull-request-title`, `Runnerless / [staging]`, and the namespaced `Fixture pull request`, `Fixture workflow run`, `Fixture check run`, and `Fixture check suite` checks. Other `ci-toolkit/` policy checks are unexpected production effects. Commit status coverage is optional and requires an external status producer.
 
 4. Push another data-only commit to exercise the same cached program, then run the verifier again. Cache reuse itself requires the operator's compiler metrics; GitHub checks alone do not prove a cache hit.
 5. To test candidate configuration validation, make a harmless program comment change in the PR and add `--require-configuration` to the verifier command.
