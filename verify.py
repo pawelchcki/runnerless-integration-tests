@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only verifier for one public Runnerless staging-fixture pull request."""
+"""Read-only verifier for production title policy and one Runnerless staging-fixture PR."""
 from __future__ import annotations
 
 import argparse
@@ -13,6 +13,8 @@ from typing import Any
 STAGING_AGGREGATE = "Runnerless / [staging]"
 STAGING_CONFIGURATION = "Runnerless / [staging] Program configuration"
 FIXTURE_WORKFLOW = "Runnerless fixture"
+TITLE_POLICY = "ci-toolkit/pull-request-title"
+TITLE_WITNESS_UNITS = 256
 BADGE_CHECKS = {"Runnerless", "Runnerless configuration", "Runnerless / Program configuration"}
 EXPECTED = {
     STAGING_AGGREGATE,
@@ -63,21 +65,44 @@ def fixture_run(repo: str, sha: str) -> dict[str, Any] | None:
     return max(matches, key=lambda run: int(run.get("id", 0)), default=None)
 
 
-def incomplete(repo: str, sha: str, app_id: int, require_configuration: bool) -> list[str]:
+def title_witness_matches(run: dict[str, Any], title: str) -> bool:
+    # Native evaluateTitle() truncates its table cell at 256 JavaScript UTF-16
+    # code units. Only its complete, single-PR summary can witness this full title.
+    if not isinstance(title, str):
+        return False
+    try:
+        if len(title.encode("utf-16-le")) // 2 > TITLE_WITNESS_UNITS:
+            return False
+    except UnicodeEncodeError:
+        return False
+    output = run.get("output")
+    if not isinstance(output, dict):
+        return False
+    escaped = title.replace("`", "\\`").replace("|", "\\|")
+    expected = ("✅ **PR title is a conventional release commit header.**\n\n"
+                "| Squash commit title | Result |\n|---|---|\n"
+                f"| `{escaped}` | ✅ |")
+    return output.get("summary") == expected
+
+
+def incomplete(repo: str, sha: str, app_id: int, require_configuration: bool,
+               pr_title: str) -> list[str]:
     runs = check_runs(repo, sha)
     names = {run.get("name") for run in runs if isinstance(run.get("name"), str)}
     production = [run for run in runs if isinstance(run.get("name"), str)
                   and (run["name"] in {"Runnerless", "Runnerless configuration"}
+                       or run["name"].startswith("ci-toolkit/")
                        or run["name"].startswith("Runnerless / ") and "[staging]" not in run["name"])]
-    unexpected = sorted({run["name"] for run in production} - BADGE_CHECKS)
+    unexpected = sorted({run["name"] for run in production} - (BADGE_CHECKS | {TITLE_POLICY}))
     if unexpected:
         return ["fixture produced unexpected production Runnerless checks: " + ", ".join(unexpected)]
     invalid_badge = sorted({run["name"] for run in production
-                            if run.get("head_sha") != sha or run.get("app", {}).get("id") != app_id
-                            or run.get("status") != "completed" or run.get("conclusion") != "success"})
+                            if run["name"] in BADGE_CHECKS and
+                            (run.get("head_sha") != sha or run.get("app", {}).get("id") != app_id
+                             or run.get("status") != "completed" or run.get("conclusion") != "success")})
     if invalid_badge:
         return ["badge checks are not successful App checks on the PR head: " + ", ".join(invalid_badge)]
-    needed = set(EXPECTED)
+    needed = EXPECTED | {TITLE_POLICY}
     if require_configuration:
         needed.add(STAGING_CONFIGURATION)
     missing = sorted(needed - names)
@@ -86,7 +111,8 @@ def incomplete(repo: str, sha: str, app_id: int, require_configuration: bool) ->
         matches = [run for run in runs if run.get("name") == name]
         owned = [run for run in matches if run.get("head_sha") == sha and run.get("app", {}).get("id") == app_id]
         latest = max(owned, key=lambda run: int(run.get("id", 0)), default=None)
-        if latest is None or latest.get("status") != "completed" or latest.get("conclusion") != "success":
+        if (latest is None or latest.get("status") != "completed" or latest.get("conclusion") != "success"
+                or name == TITLE_POLICY and not title_witness_matches(latest, pr_title)):
             invalid.append(name)
     aggregate = [run for run in runs if run.get("name") == STAGING_AGGREGATE
                  and run.get("head_sha") == sha and run.get("app", {}).get("id") == app_id]
@@ -95,7 +121,7 @@ def incomplete(repo: str, sha: str, app_id: int, require_configuration: bool) ->
     run = fixture_run(repo, sha)
     problems = (["missing checks: " + ", ".join(missing)] if missing else [])
     if invalid:
-        problems.append("checks are not successful staging-App checks on the PR head: " + ", ".join(invalid))
+        problems.append("checks are not successful Runnerless-App checks on the PR head: " + ", ".join(invalid))
     if run is None:
         problems.append("Runnerless fixture workflow has not appeared")
     elif run.get("head_sha") != sha:
@@ -118,18 +144,23 @@ def main() -> int:
     args = parser.parse_args()
     if not REPOSITORY.fullmatch(args.repo) or args.timeout < 1 or args.interval < 1 or args.pr < 1 or args.app_id < 1:
         parser.error("repo must be OWNER/REPO; pr, app-id, timeout, and interval must be positive")
-    initial_sha = current_pr(args.repo, args.pr)["head"]["sha"]
+    initial = current_pr(args.repo, args.pr)
+    initial_sha, initial_title, initial_updated = initial["head"]["sha"], initial["title"], initial["updated_at"]
     deadline = time.monotonic() + args.timeout
     while True:
-        current_sha = current_pr(args.repo, args.pr)["head"]["sha"]
-        if current_sha != initial_sha:
-            print("PR head changed while verifying; rerun against the new SHA.", file=sys.stderr)
+        current = current_pr(args.repo, args.pr)
+        current_sha = current["head"]["sha"]
+        if (current_sha != initial_sha or current["title"] != initial_title
+                or current["updated_at"] != initial_updated):
+            print("PR changed while verifying; rerun against the new snapshot.", file=sys.stderr)
             return 2
-        problems = incomplete(args.repo, current_sha, args.app_id, args.require_configuration)
+        problems = incomplete(args.repo, current_sha, args.app_id, args.require_configuration, initial_title)
         if not problems:
-            # The three API reads above form a snapshot only if the PR head still agrees.
-            if current_pr(args.repo, args.pr)["head"]["sha"] != current_sha:
-                print("PR head changed while verifying; rerun against the new SHA.", file=sys.stderr)
+            # Title edits can invalidate the native check without changing the head.
+            final = current_pr(args.repo, args.pr)
+            if (final["head"]["sha"] != current_sha or final["title"] != initial_title
+                    or final["updated_at"] != initial_updated):
+                print("PR changed while verifying; rerun against the new snapshot.", file=sys.stderr)
                 return 2
             print(f"staging fixture verified for {args.repo} PR #{args.pr} at {current_sha}")
             return 0
