@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only verifier for one public Runnerless staging-fixture pull request."""
+"""Read-only verifier for production title policy and one Runnerless staging-fixture PR."""
 from __future__ import annotations
 
 import argparse
@@ -13,6 +13,7 @@ from typing import Any
 STAGING_AGGREGATE = "Runnerless / [staging]"
 STAGING_CONFIGURATION = "Runnerless / [staging] Program configuration"
 FIXTURE_WORKFLOW = "Runnerless fixture"
+TITLE_POLICY = "ci-toolkit/pull-request-title"
 BADGE_CHECKS = {"Runnerless", "Runnerless configuration", "Runnerless / Program configuration"}
 EXPECTED = {
     STAGING_AGGREGATE,
@@ -77,7 +78,7 @@ def incomplete(repo: str, sha: str, app_id: int, require_configuration: bool) ->
                             or run.get("status") != "completed" or run.get("conclusion") != "success"})
     if invalid_badge:
         return ["badge checks are not successful App checks on the PR head: " + ", ".join(invalid_badge)]
-    needed = set(EXPECTED)
+    needed = EXPECTED | {TITLE_POLICY}
     if require_configuration:
         needed.add(STAGING_CONFIGURATION)
     missing = sorted(needed - names)
@@ -95,7 +96,7 @@ def incomplete(repo: str, sha: str, app_id: int, require_configuration: bool) ->
     run = fixture_run(repo, sha)
     problems = (["missing checks: " + ", ".join(missing)] if missing else [])
     if invalid:
-        problems.append("checks are not successful staging-App checks on the PR head: " + ", ".join(invalid))
+        problems.append("checks are not successful Runnerless-App checks on the PR head: " + ", ".join(invalid))
     if run is None:
         problems.append("Runnerless fixture workflow has not appeared")
     elif run.get("head_sha") != sha:
