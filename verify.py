@@ -29,7 +29,7 @@ EXPECTED = {
 }
 
 
-# owner/name, as GitHub spells repository full names (owner and repository segments).
+# owner/name: GitHub repository full names (owner and repository segments).
 REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 
