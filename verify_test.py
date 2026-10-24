@@ -25,7 +25,7 @@ def check(name, **changes):
 
 class BadgeFixtureVerification(unittest.TestCase):
     def problems(self, extras=(), omitted=(), workflow_conclusion="success", title=PR_TITLE):
-        runs = [check(name) for name in verify.EXPECTED | {TITLE_POLICY} if name not in omitted]
+        runs = [check(name) for name in verify.EXPECTED | {TITLE_POLICY, verify.SCAN_CHECK} if name not in omitted]
         workflow = {"id": 1, "head_sha": HEAD, "status": "completed",
                     "conclusion": workflow_conclusion}
         with patch.object(verify, "check_runs", return_value=runs + list(extras)), \
@@ -54,6 +54,10 @@ class BadgeFixtureVerification(unittest.TestCase):
     def test_successful_owned_badge_checks_are_optional(self):
         self.assertEqual(self.problems([check(name) for name in (
             "Runnerless", "Runnerless configuration", "Runnerless / Program configuration")]), [])
+
+    def test_scan_verdict_is_required(self):
+        self.assertIn("missing checks: Runnerless / LM-CC/token",
+                      self.problems(omitted=("Runnerless / LM-CC/token",))[0])
 
     def test_other_production_effects_are_rejected(self):
         self.assertIn("unexpected production", self.problems([check("Runnerless / Deploy")])[0])
@@ -124,6 +128,16 @@ class BadgeFixtureVerification(unittest.TestCase):
                             {"status": "in_progress", "conclusion": None}, {"conclusion": "failure"}]:
                 with self.subTest(name=name, changes=changes):
                     self.assertIn("badge checks are not successful", self.problems([check(name, **changes)])[0])
+
+    def test_latest_scan_verdict_must_be_a_successful_app_check_on_the_head(self):
+        for changes in [{"app": {"id": 1}}, {"head_sha": "b" * 40},
+                        {"status": "in_progress", "conclusion": None}, {"conclusion": "failure"}]:
+            with self.subTest(changes=changes):
+                problems = self.problems([check(verify.SCAN_CHECK, **changes)], omitted=(verify.SCAN_CHECK,))
+                self.assertTrue(any(verify.SCAN_CHECK in problem for problem in problems), problems)
+
+    def test_successful_scan_retry_supersedes_an_earlier_failure(self):
+        self.assertEqual(self.problems([check(verify.SCAN_CHECK, id=0, conclusion="failure")]), [])
 
     def test_badge_cannot_replace_a_missing_staging_check(self):
         self.assertTrue(any("missing checks" in problem for problem in self.problems(

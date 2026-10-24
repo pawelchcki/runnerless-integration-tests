@@ -16,6 +16,10 @@ FIXTURE_WORKFLOW = "Runnerless fixture"
 TITLE_POLICY = "ci-toolkit/pull-request-title"
 TITLE_WITNESS_UNITS = 256
 BADGE_CHECKS = {"Runnerless", "Runnerless configuration", "Runnerless / Program configuration"}
+# The llm-cc content scan verdict, published once every changed file is scored. Scoring is
+# asynchronous, so the verdict is required: success before it appears would hide a failed scan.
+SCAN_CHECK = "Runnerless / LM-CC/token"
+PROGRAM_CHECKS = BADGE_CHECKS | {SCAN_CHECK}
 EXPECTED = {
     STAGING_AGGREGATE,
     "Runnerless / [staging] Fixture pull request",
@@ -93,16 +97,18 @@ def incomplete(repo: str, sha: str, app_id: int, require_configuration: bool,
                   and (run["name"] in {"Runnerless", "Runnerless configuration"}
                        or run["name"].startswith("ci-toolkit/")
                        or run["name"].startswith("Runnerless / ") and "[staging]" not in run["name"])]
-    unexpected = sorted({run["name"] for run in production} - (BADGE_CHECKS | {TITLE_POLICY}))
+    unexpected = sorted({run["name"] for run in production} - (PROGRAM_CHECKS | {TITLE_POLICY}))
     if unexpected:
         return ["fixture produced unexpected production Runnerless checks: " + ", ".join(unexpected)]
+    # Every badge attempt must succeed. The scan verdict is required below, where only its
+    # latest owned attempt counts, so a successful retry supersedes an earlier failure.
     invalid_badge = sorted({run["name"] for run in production
                             if run["name"] in BADGE_CHECKS and
                             (run.get("head_sha") != sha or run.get("app", {}).get("id") != app_id
                              or run.get("status") != "completed" or run.get("conclusion") != "success")})
     if invalid_badge:
         return ["badge checks are not successful App checks on the PR head: " + ", ".join(invalid_badge)]
-    needed = EXPECTED | {TITLE_POLICY}
+    needed = EXPECTED | {TITLE_POLICY, SCAN_CHECK}
     if require_configuration:
         needed.add(STAGING_CONFIGURATION)
     missing = sorted(needed - names)
