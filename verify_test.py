@@ -25,7 +25,7 @@ def check(name, **changes):
 
 class BadgeFixtureVerification(unittest.TestCase):
     def problems(self, extras=(), omitted=(), workflow_conclusion="success", title=PR_TITLE):
-        runs = [check(name) for name in verify.EXPECTED | {TITLE_POLICY} if name not in omitted]
+        runs = [check(name) for name in verify.EXPECTED | {TITLE_POLICY, verify.SCAN_CHECK} if name not in omitted]
         workflow = {"id": 1, "head_sha": HEAD, "status": "completed",
                     "conclusion": workflow_conclusion}
         with patch.object(verify, "check_runs", return_value=runs + list(extras)), \
@@ -55,8 +55,9 @@ class BadgeFixtureVerification(unittest.TestCase):
         self.assertEqual(self.problems([check(name) for name in (
             "Runnerless", "Runnerless configuration", "Runnerless / Program configuration")]), [])
 
-    def test_successful_owned_scan_check_is_optional(self):
-        self.assertEqual(self.problems([check("Runnerless / LM-CC/token")]), [])
+    def test_scan_verdict_is_required(self):
+        self.assertIn("missing checks: Runnerless / LM-CC/token",
+                      self.problems(omitted=("Runnerless / LM-CC/token",))[0])
 
     def test_other_production_effects_are_rejected(self):
         self.assertIn("unexpected production", self.problems([check("Runnerless / Deploy")])[0])

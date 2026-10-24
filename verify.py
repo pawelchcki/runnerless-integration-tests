@@ -16,7 +16,8 @@ FIXTURE_WORKFLOW = "Runnerless fixture"
 TITLE_POLICY = "ci-toolkit/pull-request-title"
 TITLE_WITNESS_UNITS = 256
 BADGE_CHECKS = {"Runnerless", "Runnerless configuration", "Runnerless / Program configuration"}
-# The llm-cc content scan verdict, published once every changed file is scored.
+# The llm-cc content scan verdict, published once every changed file is scored. Scoring is
+# asynchronous, so the verdict is required: success before it appears would hide a failed scan.
 SCAN_CHECK = "Runnerless / LM-CC/token"
 PROGRAM_CHECKS = BADGE_CHECKS | {SCAN_CHECK}
 EXPECTED = {
@@ -105,7 +106,7 @@ def incomplete(repo: str, sha: str, app_id: int, require_configuration: bool,
                                or run.get("status") != "completed" or run.get("conclusion") != "success")})
     if invalid_program:
         return ["badge or scan checks are not successful App checks on the PR head: " + ", ".join(invalid_program)]
-    needed = EXPECTED | {TITLE_POLICY}
+    needed = EXPECTED | {TITLE_POLICY, SCAN_CHECK}
     if require_configuration:
         needed.add(STAGING_CONFIGURATION)
     missing = sorted(needed - names)
