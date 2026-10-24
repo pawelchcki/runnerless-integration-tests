@@ -123,12 +123,21 @@ class BadgeFixtureVerification(unittest.TestCase):
             [check(TITLE_POLICY, output={"summary": summary})], omitted=[TITLE_POLICY], title=title)))
 
     def test_badge_check_identity_and_completion_are_required(self):
-        for name in ("Runnerless", "Runnerless configuration", "Runnerless / Program configuration",
-                     "Runnerless / LM-CC/token"):
+        for name in ("Runnerless", "Runnerless configuration", "Runnerless / Program configuration"):
             for changes in [{"app": {"id": 1}}, {"head_sha": "b" * 40},
                             {"status": "in_progress", "conclusion": None}, {"conclusion": "failure"}]:
                 with self.subTest(name=name, changes=changes):
-                    self.assertIn("badge or scan checks are not successful", self.problems([check(name, **changes)])[0])
+                    self.assertIn("badge checks are not successful", self.problems([check(name, **changes)])[0])
+
+    def test_latest_scan_verdict_must_be_a_successful_app_check_on_the_head(self):
+        for changes in [{"app": {"id": 1}}, {"head_sha": "b" * 40},
+                        {"status": "in_progress", "conclusion": None}, {"conclusion": "failure"}]:
+            with self.subTest(changes=changes):
+                problems = self.problems([check(verify.SCAN_CHECK, **changes)], omitted=(verify.SCAN_CHECK,))
+                self.assertTrue(any(verify.SCAN_CHECK in problem for problem in problems), problems)
+
+    def test_successful_scan_retry_supersedes_an_earlier_failure(self):
+        self.assertEqual(self.problems([check(verify.SCAN_CHECK, id=0, conclusion="failure")]), [])
 
     def test_badge_cannot_replace_a_missing_staging_check(self):
         self.assertTrue(any("missing checks" in problem for problem in self.problems(

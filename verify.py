@@ -100,12 +100,14 @@ def incomplete(repo: str, sha: str, app_id: int, require_configuration: bool,
     unexpected = sorted({run["name"] for run in production} - (PROGRAM_CHECKS | {TITLE_POLICY}))
     if unexpected:
         return ["fixture produced unexpected production Runnerless checks: " + ", ".join(unexpected)]
-    invalid_program = sorted({run["name"] for run in production
-                              if run["name"] in PROGRAM_CHECKS and
-                              (run.get("head_sha") != sha or run.get("app", {}).get("id") != app_id
-                               or run.get("status") != "completed" or run.get("conclusion") != "success")})
-    if invalid_program:
-        return ["badge or scan checks are not successful App checks on the PR head: " + ", ".join(invalid_program)]
+    # Every badge attempt must succeed. The scan verdict is required below, where only its
+    # latest owned attempt counts, so a successful retry supersedes an earlier failure.
+    invalid_badge = sorted({run["name"] for run in production
+                            if run["name"] in BADGE_CHECKS and
+                            (run.get("head_sha") != sha or run.get("app", {}).get("id") != app_id
+                             or run.get("status") != "completed" or run.get("conclusion") != "success")})
+    if invalid_badge:
+        return ["badge checks are not successful App checks on the PR head: " + ", ".join(invalid_badge)]
     needed = EXPECTED | {TITLE_POLICY, SCAN_CHECK}
     if require_configuration:
         needed.add(STAGING_CONFIGURATION)
