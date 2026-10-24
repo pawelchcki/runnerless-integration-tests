@@ -55,6 +55,9 @@ class BadgeFixtureVerification(unittest.TestCase):
         self.assertEqual(self.problems([check(name) for name in (
             "Runnerless", "Runnerless configuration", "Runnerless / Program configuration")]), [])
 
+    def test_successful_owned_scan_check_is_optional(self):
+        self.assertEqual(self.problems([check("Runnerless / LM-CC/token")]), [])
+
     def test_other_production_effects_are_rejected(self):
         self.assertIn("unexpected production", self.problems([check("Runnerless / Deploy")])[0])
 
@@ -119,11 +122,12 @@ class BadgeFixtureVerification(unittest.TestCase):
             [check(TITLE_POLICY, output={"summary": summary})], omitted=[TITLE_POLICY], title=title)))
 
     def test_badge_check_identity_and_completion_are_required(self):
-        for name in ("Runnerless", "Runnerless configuration", "Runnerless / Program configuration"):
+        for name in ("Runnerless", "Runnerless configuration", "Runnerless / Program configuration",
+                     "Runnerless / LM-CC/token"):
             for changes in [{"app": {"id": 1}}, {"head_sha": "b" * 40},
                             {"status": "in_progress", "conclusion": None}, {"conclusion": "failure"}]:
                 with self.subTest(name=name, changes=changes):
-                    self.assertIn("badge checks are not successful", self.problems([check(name, **changes)])[0])
+                    self.assertIn("badge or scan checks are not successful", self.problems([check(name, **changes)])[0])
 
     def test_badge_cannot_replace_a_missing_staging_check(self):
         self.assertTrue(any("missing checks" in problem for problem in self.problems(
