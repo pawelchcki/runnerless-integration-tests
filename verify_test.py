@@ -183,5 +183,12 @@ class SnapshotVerification(unittest.TestCase):
         self.assertEqual(self.result([initial, initial, changed]), 2)
 
 
+class RepositoryPatternTest(unittest.TestCase):
+    def test_full_names_need_owner_and_repository(self):
+        self.assertTrue(verify.REPOSITORY.fullmatch("pawelchcki/runnerless-integration-tests"))
+        for name in ["", "owner", "owner/", "/repo", "owner/repo/extra", "owner repo/x"]:
+            self.assertIsNone(verify.REPOSITORY.fullmatch(name), name)
+
+
 if __name__ == "__main__":
     unittest.main()
