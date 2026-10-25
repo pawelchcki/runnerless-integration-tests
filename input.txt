@@ -1,1 +1,2 @@
 Change this file in a pull request to exercise Runnerless staging routing.
+host-side scan publication check
